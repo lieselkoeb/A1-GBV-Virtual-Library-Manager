@@ -26,6 +26,10 @@ Document * createDocument () {
 // Returns 1 on error
 int gbv_open(Library *lib, const char *filename) {
     FILE *f;
+    long offset;
+    int i, j;
+    char name[MAX_NAME];
+    Document *doc;
 
     f = fopen(filename, "r+"); // Attempts to open existing file
 
@@ -45,6 +49,32 @@ int gbv_open(Library *lib, const char *filename) {
     }
     else {
         // FUTURE: POPULATE STRUCT DOCUMENTS
+
+        // CREATE THE lib->docs ARRAY
+        lib->docs = calloc(1, (sizeof(Document) * lib->count));
+
+
+        fread(&offset, sizeof(long), 1, f); // Stores the offset to Directory Area
+        fseek(f, offset, SEEK_SET); // Jumps to Directory Area
+
+        // INSERT EMPTY DOCUMENTS IN lib->docs
+        for (j = 0; j < lib->count; j++) { // Iterating over array of documents
+            doc = &lib->docs[j];
+            for (i = 0; i < MAX_NAME; i++) { // Copying the document name
+                fread(&name[i], sizeof(char), 1, f);
+                if (name[i] == '\0') { // End of array
+                    break;
+                }
+            }
+            if (name[i] != '\0') { // Checking if the array was looped to the end
+                printf("Error: Name of the file is too long\n");
+                return 1;
+            }
+            strcpy(doc->name, name);
+            fread(&doc->size, sizeof(long), 1, f);
+            fread(&doc->date, sizeof(time_t), 1, f);
+            fread(&doc->offset, sizeof(long), 1, f);
+        }
     }
 
     fclose(f);
@@ -81,7 +111,7 @@ int gbv_create(const char *filename) {
 // Returns 1 on error
 int gbv_add(Library *lib, const char *archive, const char *docname) {
     FILE *f, *g;
-    Document *doc, *iDoc;
+    Document *doc, *iDoc, *doc2;
     void *buffer;
     long offset, docSize;
     int i;
@@ -105,7 +135,7 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
     }
     
     fseek(f, sizeof(int), SEEK_SET); // Skips the number of documents
-    fread(&offset, sizeof(long), 1, f); // Stores the offset to Drectory Area
+    fread(&offset, sizeof(long), 1, f); // Stores the offset to Directory Area
     fseek(f, offset, SEEK_SET); // Jumps to Directory Area
     
     // DOCUMENT
@@ -159,25 +189,29 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
             return 1;
         }
         doc = &lib->docs[0];
-        
-        // INSERT DOCUMENT DATA
-        strcpy(doc->name, docname);
-        doc->offset = offset;
-        time(&doc->date);
-        doc->size = docSize;
-
-        lib->count++;
     }
     else {
 
-        /* FUTURE:
-        - REALLOC lib->docs to 1 size more
-        - INSERT 'doc' in array lib->docs
-        - 
-        -
-        -
-        */
+        doc2 = realloc(lib->docs, (sizeof(Document) * (lib->count + 1)));
+        if (!doc2) {
+            perror("Fail to reallocate docs Array");
+            // FUTURE: DEAL WITH THE FACT THAT IT HAS WRITTEN THE 'g' CONTENT INTO 'f' AND LOST 'f' METADATA
+            fclose(f);
+            fclose(g);
+            return 1;
+        }
+        lib->docs = doc2;
+        doc = &lib->docs[lib->count];
+
     }
+
+    // INSERT DOCUMENT DATA
+    strcpy(doc->name, docname);
+    doc->offset = offset;
+    time(&doc->date);
+    doc->size = docSize;
+
+    lib->count++;
 
     // WRITE NEW NUMBER OF DOCUMENTS AND OFFSET
     offset += docSize;
