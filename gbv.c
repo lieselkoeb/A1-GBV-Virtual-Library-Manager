@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "gbv.h"
 #include "util.h"
 
@@ -181,7 +182,6 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
     // WRITE NEW NUMBER OF DOCUMENTS AND OFFSET
     offset += docSize;
     fseek(f, 0, SEEK_SET);
-    printf("%d\n", lib->count);
     fwrite(&lib->count, sizeof(int), 1, f);
     fwrite(&offset, sizeof(long), 1, f);
     
@@ -199,5 +199,88 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
     free(buffer);
     fclose(f);
     fclose(g);
+    return 0;
+}
+
+int gbv_view(const Library *lib, const char *docname) {
+    int i, equal;
+    Document *doc;
+    char buffer[20], input;
+
+    if((!lib) || ((!docname))) {
+        printf("invalid pointer in gbv_view\n");
+        return 1;
+    }
+
+    if (lib->count > 0) { // If there are documents
+        for (i = 0; i < lib->count; i++) { // Look for document
+            doc = &lib->docs[i];
+            equal = strcmp(doc->name, docname);
+            if (equal == 0) { // Found the document
+                break;
+            }
+        }
+
+        if ((equal != 0) && (i == (lib->count -1))) { // Check if looped through all documents but didn't find it
+            printf("document not found\n");
+            return 1;
+        }
+        else { // Document was found
+            i--;            // Starting point
+            input = 'n';    // Starting point
+            while (input != 'q') {
+
+                if (input == 'n') { // Prints the next document, or current document if it's the last document
+                    if (i < (lib->count - 1)) { // Checks if is not at the last document
+                        i++;
+                    }
+                    else {
+                        printf("This is the last document\n");
+                    }
+                    doc = &lib->docs[i];
+                    printf("| DOCUMENT: %d/%d\n", (i + 1), lib->count);
+                    printf("-------------------------\n");
+                    printf("| NAME:   %s\n", doc->name);
+                    printf("| SIZE:   %ld\n", doc->size);
+                    format_date(doc->date, buffer, sizeof(buffer));
+                    printf("| DATE:   %s\n", buffer);
+                    printf("| OFFSET: %ld\n", doc->offset);
+                    printf("-------------------------\n");
+                    
+                }
+                else if (input == 'p') { // Prints the previous document, or current document if it's the first document
+                    if (i > 0) {
+                        i --;
+                    }
+                    else {
+                        printf("This is the first document\n");
+                    }
+                    doc = &lib->docs[i];
+                    printf("| DOCUMENT: %d/%d\n", (i + 1), lib->count);
+                    printf("-------------------------\n");
+                    printf("| NAME:   %s\n", doc->name);
+                    printf("| SIZE:   %ld\n", doc->size);
+                    format_date(doc->date, buffer, sizeof(buffer));
+                    printf("| DATE:   %s\n", buffer);
+                    printf("| OFFSET: %ld\n", doc->offset);
+                    printf("-------------------------\n");
+                }
+                
+                printf("|-----MENU-----|\n");
+                printf("| n: next      |\n");
+                printf("| p: previous  |\n");
+                printf("| q: quit      |\n");
+                printf("|--------------|\n");
+                printf("Select an option: ");
+                scanf(" %c", &input);
+                printf("\n");
+            }
+        }
+    }
+    else { // No documents in the file
+        printf("There are no documents to show\n");
+        return 1;
+    }
+
     return 0;
 }
