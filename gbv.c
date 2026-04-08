@@ -242,7 +242,7 @@ int gbv_list(const Library *lib) {
     char buffer[20], input;
 
     if(!lib) {
-        printf("invalid pointer in gbv_view\n");
+        printf("invalid pointer in gbv_list\n");
         return 1;
     }
 
@@ -301,6 +301,66 @@ int gbv_list(const Library *lib) {
         printf("There are no documents to show\n");
         return 1;
     }
+
+    return 0;
+}
+
+int gbv_view(const Library *lib, const char *archive, const char *docname) {
+    FILE *f;
+    Document *doc;
+    char *buffer;
+    long bytesLeft;
+    int i, equal;
+
+    if ((!lib) || (!archive) || (!docname)) {
+        printf("Error: Invalid parameters on gbv_view\n");
+        return 1;
+    }
+
+    equal = -1; // Initialize variable
+
+    for (i = 0; i < lib->count; i++) {
+        doc = &lib->docs[i];
+        equal = strcmp(doc->name, docname);
+        if (equal == 0) {
+            break;
+        }
+    }
+
+    if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
+        printf("Document not found\n");
+        return 1;
+    }
+
+    // ARCHIVE
+    f = fopen(archive, "r+"); // Attempts to open existing file
+    if (!f) {
+        perror("Unable to read file 'f'");
+        return 1;
+    }
+
+    // CREATE BUFFER
+    buffer = calloc(1, BUFFER_SIZE); // Creates buffer
+    if (!buffer) {
+        perror("Fail to allocate buffer memory");
+        fclose(f);
+        return 1;
+    }
+
+    fseek(f, doc->offset, SEEK_SET); // Cursor at the beginning of the document
+
+    bytesLeft = doc->size;
+    
+    while (bytesLeft >= BUFFER_SIZE) {
+        fread(buffer, 1, BUFFER_SIZE, f);
+        fwrite(buffer, 1, BUFFER_SIZE, stdout);
+        bytesLeft -= BUFFER_SIZE;
+    }
+    
+    memset(buffer, 0, BUFFER_SIZE); // Makes sure it will finish at the end of the string, thats not 
+    fread(buffer, 1, bytesLeft, f);
+    fwrite(buffer, 1, bytesLeft, stdout);
+    printf("\n---End of Document---\n");
 
     return 0;
 }
