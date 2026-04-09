@@ -8,6 +8,10 @@
 /* AUXILIARY PROTOTYPES */
 Document * createDocument ();
 
+// Returns pointer to document
+// Returns NULL if document is not found or invalid pointer
+Document * findDocument(const Library *lib, const char *docname);
+
 /* AUXILIARY FUNCTIONS */
 Document * createDocument () {
     Document *d;
@@ -18,6 +22,36 @@ Document * createDocument () {
     }
 
     return d;
+}
+
+Document * findDocument(const Library *lib, const char *docname) {
+    Document *doc;
+    int equal, i;
+
+    if ((!lib) || (!docname)) {
+        return NULL;
+    }
+
+    if (lib->count > 0) {
+        equal = -1; // Initialize variable
+
+        for (i = 0; i < lib->count; i++) {
+            doc = &lib->docs[i];
+            equal = strcmp(doc->name, docname);
+            if (equal == 0) {
+                break;
+            }
+        }
+
+        if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
+            return NULL;
+        }
+    }
+    else {
+        return NULL;
+    }
+
+    return doc;
 }
 
 /* FUNCTIONS */
@@ -310,7 +344,6 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     Document *doc;
     char *buffer;
     long bytesLeft, bytesToRead;
-    int i, equal;
     char input;
 
     if ((!lib) || (!archive) || (!docname)) {
@@ -319,21 +352,13 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     }
 
     if (lib->count > 0) {
-        equal = -1; // Initialize variable
 
-        for (i = 0; i < lib->count; i++) {
-            doc = &lib->docs[i];
-            equal = strcmp(doc->name, docname);
-            if (equal == 0) {
-                break;
-            }
-        }
-
-        if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
+        doc = findDocument(lib, docname);
+        if (!doc) {
             printf("Document not found\n");
             return 1;
         }
-
+        
         // ARCHIVE
         f = fopen(archive, "r+"); // Attempts to open existing file
         if (!f) {
@@ -397,8 +422,6 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     }
     else { // No documents in the file
         printf("There are no documents to show\n");
-        free(buffer);
-        fclose(f);
         return 1;
     }
 
