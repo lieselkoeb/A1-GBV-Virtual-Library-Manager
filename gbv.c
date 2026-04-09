@@ -309,58 +309,96 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     FILE *f;
     Document *doc;
     char *buffer;
-    long bytesLeft;
+    long bytesLeft, bytesToRead;
     int i, equal;
+    char input;
 
     if ((!lib) || (!archive) || (!docname)) {
         printf("Error: Invalid parameters on gbv_view\n");
         return 1;
     }
 
-    equal = -1; // Initialize variable
+    if (lib->count > 0) {
+        equal = -1; // Initialize variable
 
-    for (i = 0; i < lib->count; i++) {
-        doc = &lib->docs[i];
-        equal = strcmp(doc->name, docname);
-        if (equal == 0) {
-            break;
+        for (i = 0; i < lib->count; i++) {
+            doc = &lib->docs[i];
+            equal = strcmp(doc->name, docname);
+            if (equal == 0) {
+                break;
+            }
+        }
+
+        if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
+            printf("Document not found\n");
+            return 1;
+        }
+
+        // ARCHIVE
+        f = fopen(archive, "r+"); // Attempts to open existing file
+        if (!f) {
+            perror("Unable to read file 'f'");
+            return 1;
+        }
+
+        // CREATE BUFFER
+        buffer = calloc(1, BUFFER_SIZE); // Creates buffer
+        if (!buffer) {
+            perror("Fail to allocate buffer memory");
+            fclose(f);
+            return 1;
+        }
+
+        fseek(f, doc->offset, SEEK_SET); // Cursor at the beginning of the document
+
+        bytesLeft = doc->size;
+        bytesToRead = BUFFER_SIZE;
+        input = 'n';
+        while (input != 'q') {
+            if (input == 'n') {
+                if (bytesLeft != 0) {
+                    if (bytesToRead > bytesLeft) { // FUTURE: THINK ABOUT A DOCUMENT THAT THE SIZE IS ALREADY LESS THAN BUFFER SIZE
+                        bytesToRead = bytesLeft;
+                    }
+                    fread(buffer, 1, bytesToRead, f);
+                    fwrite(buffer, 1, bytesToRead, stdout);
+                    bytesLeft -= bytesToRead;
+                }
+                else {
+                    printf("You've reached the end of the document");
+                }
+            }
+            else if (input == 'p') {
+                
+                // Moves cursor to the beginning of the section
+                if (bytesLeft == 0) {
+                    fseek(f, -bytesToRead, SEEK_CUR);
+                    bytesLeft += bytesToRead;
+                }
+                else if (bytesLeft < doc->size) {
+                    fseek(f, -BUFFER_SIZE, SEEK_CUR);
+                    bytesLeft += BUFFER_SIZE;
+                }
+                // Moves cursor to the beginning of previous section
+                if (bytesLeft != doc->size) {
+                    bytesToRead = BUFFER_SIZE;
+                    fseek(f, -BUFFER_SIZE, SEEK_CUR);
+                    fread(buffer, 1, bytesToRead, f);
+                    fwrite(buffer, 1, bytesToRead, stdout);
+                }
+                else {
+                    printf("You've reached the beginning of the document");
+                }
+            }
+
+            printf("\n<< previous (p) | quit (q) | next (n) >>\n");
+            scanf(" %c", &input);
         }
     }
-
-    if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
-        printf("Document not found\n");
+    else { // No documents in the file
+        printf("There are no documents to show\n");
         return 1;
     }
-
-    // ARCHIVE
-    f = fopen(archive, "r+"); // Attempts to open existing file
-    if (!f) {
-        perror("Unable to read file 'f'");
-        return 1;
-    }
-
-    // CREATE BUFFER
-    buffer = calloc(1, BUFFER_SIZE); // Creates buffer
-    if (!buffer) {
-        perror("Fail to allocate buffer memory");
-        fclose(f);
-        return 1;
-    }
-
-    fseek(f, doc->offset, SEEK_SET); // Cursor at the beginning of the document
-
-    bytesLeft = doc->size;
-    
-    while (bytesLeft >= BUFFER_SIZE) {
-        fread(buffer, 1, BUFFER_SIZE, f);
-        fwrite(buffer, 1, BUFFER_SIZE, stdout);
-        bytesLeft -= BUFFER_SIZE;
-    }
-    
-    memset(buffer, 0, BUFFER_SIZE); // Makes sure it will finish at the end of the string, thats not 
-    fread(buffer, 1, bytesLeft, f);
-    fwrite(buffer, 1, bytesLeft, stdout);
-    printf("\n---End of Document---\n");
 
     return 0;
 }
