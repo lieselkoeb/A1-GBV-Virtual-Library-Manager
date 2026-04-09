@@ -351,6 +351,11 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
         return 1;
     }
 
+    if ((strlen(docname) + 1) > MAX_NAME) {
+        printf("Error: Document name length is too long\n");
+        return 1;
+    }
+
     if (lib->count > 0) {
 
         doc = findDocument(lib, docname);
@@ -382,7 +387,7 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
         while (input != 'q') {
             if (input == 'n') {
                 if (bytesLeft != 0) {
-                    if (bytesToRead > bytesLeft) { // FUTURE: THINK ABOUT A DOCUMENT THAT THE SIZE IS ALREADY LESS THAN BUFFER SIZE
+                    if (bytesToRead > bytesLeft) {
                         bytesToRead = bytesLeft;
                     }
                     fread(buffer, 1, bytesToRead, f);
