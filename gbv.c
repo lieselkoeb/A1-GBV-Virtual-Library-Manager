@@ -397,8 +397,13 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     }
     else { // No documents in the file
         printf("There are no documents to show\n");
+        free(buffer);
+        fclose(f);
         return 1;
     }
+
+    free(buffer);
+    fclose(f);
 
     return 0;
 }
