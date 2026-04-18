@@ -12,8 +12,39 @@ Document * createDocument ();
 // Returns NULL if document is not found or invalid pointer
 Document * findDocument(const Library *lib, const char *docname);
 
-// Inserts metadata in lib->docs array, deleting previous metadata in the file
-int updateMetadata (const Library *lib, const char *fileName);
+// Writes all metadata from lib->docs to the end of the given library file.
+// Always appends the directory area at the end of the file and does not check for existing metadata entries.
+// Returns 0 on success.
+// Returns 1 on failure.
+int updateMetadata (Library *lib, const char *docname);
+
+// Inserts a new document into the library container file.
+// Writes only the raw document data and updates the in-memory directory,
+// but does not write metadata to disk.
+// Assumes the document does not already exist in the library.
+// Returns 0 on success.
+// Returns 1 on failure, leaving the file unchanged.
+int insertNewDocument(Library *lib, const char *archive, const char *docname);
+
+// Replaces an existing document in the library while preserving its original offset
+// whenever possible, adjusting following documents if necessary.
+// Updates the in-memory directory but does not rewrite metadata.
+// Returns 0 on success.
+// Returns 1 on failure.
+int replaceDocument (Document *docs, int docIndex, const char *archive, const char *docname);
+
+// Searches for a document by name in the library directory.
+// Returns the index of the matching document.
+// Returns -1 if the document does not exist.
+int existingFile(Document *docs, const char *archive);
+
+// Creates a temporary backup copy of the given file by appending ".temp"
+// to its original name.
+// Example: "file.txt" becomes "file.txt.temp".
+// Returns the name of the temporary file on success.
+// Returns NULL on failure.
+char * copyFile(const char *file);
+
 
 /* AUXILIARY FUNCTIONS */
 Document * createDocument () {
@@ -57,91 +88,63 @@ Document * findDocument(const Library *lib, const char *docname) {
     return doc;
 }
 
-int updateMetadata (const Library *lib, const char *fileName) {
-    FILE *f, *temp;
-    Document *doc;
-    size_t readsize, written;
-    long stopReadingAt, currentOffset;
-    int charsLeft, i;
-    char *buffer;
+char * copyFile(const char *fileName) {
+    FILE *f, *t;
+    size_t bytesRead, bytesWritten;
+    char buffer[BUFFER_SIZE], *temp;
 
-    if ((!lib) || (!fileName)) {
-        printf("Error: Invalid parameters on gbv_add\n");
-        return 1;
-    }
-
-    f = fopen(fileName, "r");
-    if (!f) {
-        perror("Unable to read file 'f'");
-        return 1;
-    }    
-    
-    temp = fopen("temp.gbv", "w");
-    if (!temp) {
-        perror("Unable to write file 'w'");
-        fclose(f);
-        return 1;
-    }
-
-    // CREATE BUFFER
-    buffer = calloc(1, BUFFER_SIZE); // Creates buffer
-    if (!buffer) {
-        perror("Fail to allocate buffer memory");
-        fclose(f);
-        fclose(temp);
-        return 1;
-    }
-
-    fseek(f, sizeof(int), SEEK_SET); // Skips the number of documents
-    fread(&stopReadingAt, sizeof(long), 1, f); // Stores the offset to Directory Area
-
-    // WRITE NEW NUMBER OF DOCUMENTS AND DIRECTORY AREA OFFSET
-    fwrite(&lib->count, sizeof(int), 1, temp);
-    fwrite(&stopReadingAt, sizeof(long), 1, temp);
-    
-    // COPIES THE DOCUMENT AREA OF 'f' TO 'temp' 
-        currentOffset = ftell(f);
-        while ((currentOffset + BUFFER_SIZE) < stopReadingAt) {
-            readsize = fread(buffer, 1, BUFFER_SIZE, f);
-            written = fwrite(buffer, 1, BUFFER_SIZE, temp);
-            if (readsize != written) {
-                perror("Fail to write in 'temp.gbv'");
-                fclose(f);
-                fclose(temp);
-                remove("temp.gbv");
-                return 1;
-            }
-
-            currentOffset = ftell(f);
+    { // TEST IF PARAMETER IS VALID
+        if (!fileName) {
+            return NULL;
         }
-        charsLeft = stopReadingAt - currentOffset;
+    }
 
-        readsize = fread(buffer, 1, charsLeft, f);
-        written = fwrite(buffer, 1, charsLeft, temp);
+    { // OPEN GIVEN FILE
+        f = fopen(fileName, "rb");
+        if (!f) {
+            perror("copyFile - Unable to open f");
+            return NULL;
+        }
+    }
 
-        if (readsize != written) {
-            perror("Fail to write in 'temp.gbv'");
+    { // COPIES fileName to temp and ADDS ".temp" AT THE END
+        temp = calloc(1, MAX_NAME + 6);
+        if (!temp) {
+            perror("copyFile - Unable to alloc memory to temp");
             fclose(f);
-            fclose(temp);
-            remove("temp.gbv");
-            return 1;
+            return NULL;
         }
+        strcpy(temp, fileName);
+        strcat(temp, ".temp");
+    }
     
-    // WRITE METADATA (DOCUMENTS) IN 'temp'
-    for (i = 0; i < lib->count; i++) {
-        doc = &lib->docs[i];
-        fwrite(doc->name, (strlen(doc->name) + 1), 1, temp);
-        fwrite(&doc->size, sizeof(long), 1, temp);
-        fwrite(&doc->date, sizeof(time_t), 1, temp);
-        fwrite(&doc->offset, sizeof(long), 1, temp);
+    { // CREATES TEMPORARY FILE
+        t = fopen(temp, "wb");
+        if (!t) {
+            perror("copyFile - Unable to open t");
+            free(temp);
+            fclose(f);
+            return NULL;
+        }
     }
 
-    fclose(temp);
+    { // COPIES GIVEN FILE TO .temp FILE
+        while ((bytesRead = (fread(buffer, 1, BUFFER_SIZE, f))) > 0) {
+            bytesWritten = fwrite(buffer, 1, bytesRead, t);
+            if (bytesRead != bytesWritten) {
+                printf("copyFile: Fail to write in temp\n");
+                fclose(t);
+                fclose(f);
+                remove(temp);
+                free(temp);
+                return NULL;
+            }
+        }
+    }
+    
     fclose(f);
-    remove(fileName);
-    rename("temp.gbv", fileName);
-
-    return 0;
+    fclose(t);
+    return temp;
 }
 
 /* FUNCTIONS */
@@ -172,8 +175,6 @@ int gbv_open(Library *lib, const char *filename) {
         lib->docs = NULL;
     }
     else {
-        // FUTURE: POPULATE STRUCT DOCUMENTS
-
         // CREATE THE lib->docs ARRAY
         lib->docs = calloc(1, (sizeof(Document) * lib->count));
 
@@ -181,7 +182,7 @@ int gbv_open(Library *lib, const char *filename) {
         fread(&offset, sizeof(long), 1, f); // Stores the offset to Directory Area
         fseek(f, offset, SEEK_SET); // Jumps to Directory Area
 
-        // INSERT EMPTY DOCUMENTS IN lib->docs
+        // INSERT DOCUMENTS IN lib->docs
         for (j = 0; j < lib->count; j++) { // Iterating over array of documents
             doc = &lib->docs[j];
             for (i = 0; i < MAX_NAME; i++) { // Copying the document name
@@ -219,8 +220,10 @@ int gbv_create(const char *filename) {
 
     ret = fwrite(&i, sizeof(int), 1, f); // Inserts number of documents
     if (!ret) {
+        fclose(f);
         return 1;
     }
+
     ret = fwrite(&j, sizeof(long), 1, f); // Inserts offset to Directory Area
     if (!ret) {
         return 1;
@@ -234,123 +237,64 @@ int gbv_create(const char *filename) {
 // Returns 0 on success
 // Returns 1 on error
 int gbv_add(Library *lib, const char *archive, const char *docname) {
-    FILE *f, *g;
-    Document *doc, *iDoc, *doc2;
-    void *buffer;
-    long offset, docSize;
-    int i;
-    size_t readsize, written;
+    char *temp;
+    int docIndex, ret;
 
-    if ((!lib) || (!archive) || (!docname)) {
-        printf("Error: Invalid parameters on gbv_add\n");
-        return 1;
-    }
-
-    if ((strlen(docname) + 1) > MAX_NAME) {
-        printf("Error: Document name length is too long\n");
-        return 1;
-    }
-    
-    // ARCHIVE
-    f = fopen(archive, "r+"); // Attempts to open existing file
-    if (!f) {
-        perror("Unable to read file 'f'");
-        return 1;
-    }
-    
-    fseek(f, sizeof(int), SEEK_SET); // Skips the number of documents
-    fread(&offset, sizeof(long), 1, f); // Stores the offset to Directory Area
-    fseek(f, offset, SEEK_SET); // Jumps to Directory Area
-    
-    // DOCUMENT
-    g = fopen(docname, "r"); // Attempts to open existing file
-    if (!g) {
-        perror("Unable to read file 'g'");
-        fclose(f);
-        return 1;
-    }
-    
-    // CREATE BUFFER
-    buffer = calloc(1, BUFFER_SIZE); // Creates buffer
-    if (!buffer) {
-        perror("Fail to allocate buffer memory");
-        fclose(f);
-        fclose(g);
-        return 1;
-    }
-
-    docSize = 0;
-    while ((readsize = fread(buffer, 1, BUFFER_SIZE, g)) > 0) {
-        written = fwrite(buffer, 1, readsize, f);
-        if (written != readsize) {
-            perror("Fail to write in 'f'");
-            // FUTURE: DEAL WITH THE FACT THAT IT HAS POSSIBLY WRITTEN THE 'g' CONTENT INTO 'f' AND LOST 'f' METADATA
-            free(buffer);
-            fclose(f);
-            fclose(g);
+    { // TEST IF PARAMETERS ARE VALID
+        if ((!lib) || (!archive) || (!docname)) {
+            printf("Error: Invalid parameters on gbv_add\n");
             return 1;
         }
-        docSize += (long) readsize;
-    }
-    
-    if (ferror(g)) {
-        perror("Fail to read 'g' completely");
-        // FUTURE: DEAL WITH THE FACT THAT IT HAS POSSIBLY WRITTEN THE 'g' CONTENT INTO 'f' AND LOST 'f' METADATA
-        free(buffer);
-        fclose(f);
-        fclose(g);
-        return 1;
-    }
-
-    // INSERT NEW DOCUMENT IN LIBRARY DOCUMENTS ARRAY
-    if (lib->count == 0) { // First document in the library
-        lib->docs = calloc(1, sizeof(Document));
-        if (!lib->docs) {
-            perror("Fail to allocate docs Array");
-            // FUTURE: DEAL WITH THE FACT THAT IT HAS WRITTEN THE 'g' CONTENT INTO 'f' AND LOST 'f' METADATA
-            fclose(f);
-            fclose(g);
+        if ((strlen(docname) + 1) > MAX_NAME) {
+            printf("Error: Document name length is too long\n");
             return 1;
         }
-        doc = &lib->docs[0];
     }
-    else {
 
-        doc2 = realloc(lib->docs, (sizeof(Document) * (lib->count + 1)));
-        if (!doc2) {
-            perror("Fail to reallocate docs Array");
-            // FUTURE: DEAL WITH THE FACT THAT IT HAS WRITTEN THE 'g' CONTENT INTO 'f' AND LOST 'f' METADATA
-            fclose(f);
-            fclose(g);
+    { // COPIES THE LIBRARY FILE TO RETURN TO PREVIOUS STATUS IN CASE OF ERROR
+        temp = copyFile(docname);
+        if (!temp) {
+            printf("Error in copying file\n");
             return 1;
         }
-        lib->docs = doc2;
-        doc = &lib->docs[lib->count];
-
     }
-
-    // INSERT DOCUMENT DATA
-    strcpy(doc->name, docname);
-    doc->offset = offset;
-    time(&doc->date);
-    doc->size = docSize;
-
-    lib->count++;
-
-    // WRITE NEW NUMBER OF DOCUMENTS AND OFFSET
-    offset += docSize;
-    fseek(f, 0, SEEK_SET);
-    fwrite(&lib->count, sizeof(int), 1, f);
-    fwrite(&offset, sizeof(long), 1, f);
     
-    // CLOSE FILES AND FREE MEMORY
-    free(buffer);
-    fclose(f);
-    fclose(g);
-
-    // WRITE METADATA (DOCUMENTS) IN 'f'
-    updateMetadata(&lib, docname);
-
+    { // EITHER ADDS A NEW DOCUMENT OR SUBSTITUTES AND OLD DOCUMENT
+        if ((docIndex = existingFile(lib->docs, archive)) >= 0) {
+            ret = replaceDocument (lib->docs, docIndex, archive, docname);
+            if (ret == 1) {
+                printf("Unable to substitute document\n");
+                free(temp);
+                remove(docname);
+                rename(temp, docname);
+                return 1;
+            }
+        }
+        else {
+            ret = insertNewDocument(lib, archive, docname);
+            if (ret == 1) {
+                printf("Unable to insert new document\n");
+                free(temp);
+                remove(docname);
+                rename(temp, docname);
+                return 1;
+            }
+        }
+    }
+    
+    { // UPDATES METADATA
+        ret = updateMetadata(lib, docname);
+        if (ret == 1) {
+            printf("Unable to update metadata\n");
+            free(temp);
+            remove(docname);
+            rename(temp, docname);
+            return 1;
+        }
+    }
+    
+    remove(temp);
+    free(temp);
     return 0;
 }
 
