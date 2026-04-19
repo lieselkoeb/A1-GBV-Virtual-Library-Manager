@@ -8,9 +8,10 @@
 /* AUXILIARY PROTOTYPES */
 Document * createDocument ();
 
-// Returns pointer to document
-// Returns NULL if document is not found or invalid pointer
-Document * findDocument(const Library *lib, const char *docname);
+// Searches for a document by name in the library directory.
+// Returns the index of the matching document.
+// Returns -1 if the document does not exist.
+int findDocument(const Library *lib, const char *docname);
 
 // Writes all metadata from lib->docs to the end of the given library file.
 // Always appends the directory area at the end of the file and does not check for existing metadata entries.
@@ -33,11 +34,6 @@ int insertNewDocument(Library *lib, const char *archive, const char *docname);
 // Returns 1 on failure.
 int replaceDocument (Document *docs, int docIndex, const char *archive, const char *docname);
 
-// Searches for a document by name in the library directory.
-// Returns the index of the matching document.
-// Returns -1 if the document does not exist.
-int existingFile(Document *docs, const char *archive);
-
 // Creates a temporary backup copy of the given file by appending ".temp"
 // to its original name.
 // Example: "file.txt" becomes "file.txt.temp".
@@ -58,14 +54,21 @@ Document * createDocument () {
     return d;
 }
 
-Document * findDocument(const Library *lib, const char *docname) {
+int findDocument(const Library *lib, const char *docname) {
     Document *doc;
     int equal, i;
     
-    if ((!lib) || (!docname)) {
-        return NULL;
+    { // TEST IF PARAMETERS ARE VALID
+        if ((!lib) || (!docname)) {
+            printf("Error: invalid parameters\n");
+            return -2;
+        }
+        if ((strlen(docname) + 1) > MAX_NAME) {
+            printf("Error: Document name length is too long\n");
+            return -2;
+        }
     }
-    
+
     if (lib->count > 0) {
         equal = -1; // Initialize variable
         
@@ -78,14 +81,14 @@ Document * findDocument(const Library *lib, const char *docname) {
         }
         
         if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
-            return NULL;
+            return -1;
         }
     }
     else {
-        return NULL;
+        return -1;
     }
     
-    return doc;
+    return i;
 }
 
 char * copyFile(const char *fileName) {
@@ -259,8 +262,8 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
         }
     }
     
-    { // EITHER ADDS A NEW DOCUMENT OR SUBSTITUTES AND OLD DOCUMENT
-        if ((docIndex = existingFile(lib->docs, archive)) >= 0) {
+    { // EITHER ADDS A NEW DOCUMENT OR REPLACES AN OLD DOCUMENT
+        if ((docIndex = findDocument(lib, docname)) >= 0) {
             ret = replaceDocument (lib->docs, docIndex, archive, docname);
             if (ret == 1) {
                 printf("Unable to substitute document\n");
@@ -270,7 +273,7 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
                 return 1;
             }
         }
-        else {
+        else if (docIndex == -1) {
             ret = insertNewDocument(lib, archive, docname);
             if (ret == 1) {
                 printf("Unable to insert new document\n");
@@ -279,6 +282,13 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
                 rename(temp, docname);
                 return 1;
             }
+        }
+        else {
+            printf("gbv_add - Fail to search file in lib->docs\n");
+            free(temp);
+            remove(docname);
+            rename(temp, docname);
+            return 1;
         }
     }
     
