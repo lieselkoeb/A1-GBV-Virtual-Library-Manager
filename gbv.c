@@ -235,10 +235,9 @@ int gbv_create(const char *filename) {
 // Returns 1 on error
 int gbv_add(Library *lib, const char *archive, const char *docname) {
     FILE *f, *g;
-    Document *doc, *iDoc, *doc2;
+    Document *doc, *doc2;
     void *buffer;
     long offset, docSize;
-    int i;
     size_t readsize, written;
 
     if ((!lib) || (!archive) || (!docname)) {
@@ -349,7 +348,7 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
     fclose(g);
 
     // WRITE METADATA (DOCUMENTS) IN 'f'
-    updateMetadata(&lib, docname);
+    updateMetadata(lib, archive);
 
     return 0;
 }
