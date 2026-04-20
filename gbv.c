@@ -17,7 +17,7 @@ int findDocument(const Library *lib, const char *docname);
 // Always appends the directory area at the end of the file and does not check for existing metadata entries.
 // Returns 0 on success.
 // Returns 1 on failure.
-int updateMetadata (Library *lib, const char *docname);
+int updateMetadata (Library *lib, const char *docname){return 0;}
 
 // Inserts a new document into the library container file.
 // Writes only the raw document data and updates the in-memory directory,
@@ -32,7 +32,7 @@ int insertNewDocument(Library *lib, const char *archive, const char *docname);
 // Updates the in-memory directory but does not rewrite metadata.
 // Returns 0 on success.
 // Returns 1 on failure.
-int replaceDocument (Document *docs, int docIndex, const char *archive, const char *docname);
+int replaceDocument (Document *docs, int docIndex, const char *archive, const char *docname){return 0;}
 
 // Creates a temporary backup copy of the given file by appending ".temp"
 // to its original name.
@@ -41,6 +41,7 @@ int replaceDocument (Document *docs, int docIndex, const char *archive, const ch
 // Returns NULL on failure.
 char * copyFile(const char *file);
 
+int resizeDocumentsArray (Library *lib, char option);
 
 /* AUXILIARY FUNCTIONS */
 Document * createDocument () {
@@ -80,7 +81,7 @@ int findDocument(const Library *lib, const char *docname) {
             }
         }
         
-        if ((i == (lib->count - 1)) && (equal != 0)) { // Checks if the last document is not the 'docname'
+        if ((i == (lib->count)) && (equal != 0)) { // Checks if the last document is not the 'docname'
             return -1;
         }
     }
@@ -148,6 +149,135 @@ char * copyFile(const char *fileName) {
     fclose(f);
     fclose(t);
     return temp;
+}
+
+int insertNewDocument(Library *lib, const char *archive, const char *docname) {
+    FILE *d, *a;
+    Document *doc;
+    size_t bytesRead, bytesWritten;
+    long directoryAreaOffset, docSize;
+    int ret;
+    char buffer[BUFFER_SIZE];
+
+    { // TEST IF PARAMETERS ARE VALID
+        if ((!lib) || (!archive) || (!docname)) {
+            printf("Error: Invalid parameters on insertNewDocument\n");
+            return 1;
+        }
+        if ((strlen(docname) + 1) > MAX_NAME) {
+            printf("Error: Document name length is too long\n");
+            return 1;
+        }
+    }
+
+    { // OPEN FILES
+        a = fopen(archive, "r+");
+        if (!a) {
+            perror("insertNewDocument - Unable to read file 'a'");
+            return 1;
+        }
+        
+        d = fopen(docname, "r");
+        if (!d) {
+            perror("insertNewDocument - Unable to read file 'd'");
+            fclose(a);
+            return 1;
+        }
+    }
+
+    { // MOVES CURSOR TO DIRECTORY AREA
+        fseek(a, sizeof(int), SEEK_SET);
+        fread(&directoryAreaOffset, sizeof(long), 1, a);
+        fseek(a, directoryAreaOffset, SEEK_SET);
+    }
+
+    { // WRITE DOCUMENT IN .gbv FILE
+        docSize = 0;
+        while ((bytesRead = (fread(buffer, 1, BUFFER_SIZE, d))) > 0) {
+            bytesWritten = fwrite(buffer, 1, bytesRead, a);
+            if (bytesRead != bytesWritten) {
+                printf("insertNewDocument: Failed to write in .gbv archive\n");
+                fclose(a);
+                fclose(d);
+                return 1;
+            }
+            docSize += (long) bytesRead;
+        }
+    }
+    
+    fclose(a);
+    fclose(d);
+    
+    { // UPDATE Library
+        { // INCREASE ARRAY CAPACITY
+            ret = resizeDocumentsArray(lib, 'i');
+            if (ret == 1) {
+                printf("insertNewDocument - Failed to resize array\n");
+                return 1;
+            }
+        }
+        
+        { // INSERT NEW DOCUMENT METADATA IN THE lib->docs ARRAY
+            doc = &lib->docs[lib->count - 1];
+            strcpy(doc->name, docname);
+            doc->offset = directoryAreaOffset;
+            time(&doc->date);
+            doc->size = docSize;
+        }
+    }
+        
+    { // UPDATE METADATA IN FILE
+        ret = updateMetadata (lib, archive);
+        if (ret == 1) {
+            printf("insertNewDocument - Failed to write metadata in file\n");
+            ret = resizeDocumentsArray(lib, 'd');
+            if (ret == 1) {
+                printf("insertNewDocument - Failed to resize array\n");
+                printf("WARNING: in-memory metadata may be inconsistent\n");
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int resizeDocumentsArray (Library *lib, char option) {
+    Document *newLibDocs;
+
+    if ((!lib)) {
+        printf("resizeDocumentsArray - invalid parameter\n");
+        return 1;
+    }
+    
+    if (option == 'i') {
+        newLibDocs = realloc(lib->docs, (sizeof(Document) * (lib->count + 1)));
+        if (!newLibDocs) {
+            perror("resizeDocumentsArray - realloc failed\n");
+            return 1;
+        }
+        lib->docs = newLibDocs;
+        lib->count++;
+    }
+    else if (option == 'd') {
+        if (lib->count == 0) {
+            printf("resizeDocumentsArray - Decrease an empty array is not possible\n");
+            return 0;
+        }
+        newLibDocs = realloc(lib->docs, (sizeof(Document) * (lib->count - 1)));
+        if (!newLibDocs) {
+            perror("resizeDocumentsArray - realloc failed\n");
+            return 1;
+        }
+        lib->docs = newLibDocs;
+        lib->count--;
+    }
+    else {
+        printf("resizeDocumentsArray - invalid option\n");
+        return 1;
+    }
+
+    return 0;
 }
 
 /* FUNCTIONS */
@@ -266,10 +396,10 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
         if ((docIndex = findDocument(lib, docname)) >= 0) {
             ret = replaceDocument (lib->docs, docIndex, archive, docname);
             if (ret == 1) {
-                printf("Unable to substitute document\n");
-                free(temp);
+                printf("Unable to replace document\n");
                 remove(docname);
                 rename(temp, docname);
+                free(temp);
                 return 1;
             }
         }
@@ -277,28 +407,17 @@ int gbv_add(Library *lib, const char *archive, const char *docname) {
             ret = insertNewDocument(lib, archive, docname);
             if (ret == 1) {
                 printf("Unable to insert new document\n");
-                free(temp);
                 remove(docname);
                 rename(temp, docname);
+                free(temp);
                 return 1;
             }
         }
         else {
-            printf("gbv_add - Fail to search file in lib->docs\n");
-            free(temp);
+            printf("gbv_add - Failed to search file in lib->docs\n");
             remove(docname);
             rename(temp, docname);
-            return 1;
-        }
-    }
-    
-    { // UPDATES METADATA
-        ret = updateMetadata(lib, docname);
-        if (ret == 1) {
-            printf("Unable to update metadata\n");
             free(temp);
-            remove(docname);
-            rename(temp, docname);
             return 1;
         }
     }
@@ -382,6 +501,7 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
     Document *doc;
     char *buffer;
     long bytesLeft, bytesToRead;
+    int index;
     char input;
 
     if ((!lib) || (!archive) || (!docname)) {
@@ -396,7 +516,8 @@ int gbv_view(const Library *lib, const char *archive, const char *docname) {
 
     if (lib->count > 0) {
 
-        doc = findDocument(lib, docname);
+        index = findDocument(lib, docname);
+        doc = &lib->docs[index];
         if (!doc) {
             printf("Document not found\n");
             return 1;
